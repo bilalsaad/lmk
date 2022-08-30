@@ -1,4 +1,10 @@
 
 
+-- 08-29-2022
+ [2] - Add unit tests for the myscraper module
+ [3] - Add a notifying mechanism for matches
+ [4] - Add a way to compare to previously scraped sites
+ [5] - Figure out how to upload this github
 -- 08-28-2022
  [1] Figure out if there's a better way to scrape the HTML.
+
