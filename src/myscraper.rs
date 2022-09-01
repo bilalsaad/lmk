@@ -2,7 +2,6 @@ use itertools::Itertools;
 use scraper::Html;
 use scraper::Selector;
 
-#[derive(Debug, PartialEq)]
 pub struct Target {
     // The uri the scraper should scrape. Note that this serves as the ID of thes
     pub uri: String,
@@ -10,10 +9,9 @@ pub struct Target {
     // todo: something notifier thing.
 }
 
-#[derive(Debug, PartialEq)]
 pub enum Matcher {
     AnyChange,
-    TextMatch(String),
+    TextMatch(String, Box<dyn Fn(&str) -> ()>),
 }
 
 pub struct Scraper {
@@ -32,7 +30,7 @@ impl Scraper {
             let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
                 Ok(Ok(x)) => Html::parse_document(&x),
                 Ok(Err(e)) | Err(e) => {
-                    eprintln!("failed to scrape {:?}, err: {:?}", t, e);
+                    eprintln!("failed to scrape {:?}, err: {:?}", t.uri, e);
                     continue;
                 }
             };
@@ -56,7 +54,7 @@ where
         .filter_map(|x| {
             // custom matcher(s) for document id
             match &matcher {
-                Matcher::TextMatch(match_text) => {
+                Matcher::TextMatch(match_text, _) => {
                     if x.contains(match_text) {
                         Some(x)
                     } else {
@@ -70,7 +68,11 @@ where
             }
         })
         .unique()
-        .for_each(|x| println!("I see text: {:?}", x));
+        .for_each(|x| {
+            if let Matcher::TextMatch(_, f) = &matcher {
+                f(x);
+            }
+        });
     // Look over all text in content and look for matches. Generate match notifications for any
     // matches.
     Ok(())
