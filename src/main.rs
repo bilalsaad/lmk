@@ -1,4 +1,4 @@
-use crate::myscraper::{Matcher, Target};
+use crate::myscraper::{Target};
 
 mod myscraper;
 
@@ -6,15 +6,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let s = myscraper::Scraper::new(vec![
         Target {
             uri: "https://www.brooklynmuseum.org/about/careers".to_string(),
-            matcher: Matcher::TextMatch(
-                "urator".to_string(),
-                Box::new(|x| println!("found {}", x)),
-            ),
+            text: "Curator".to_string(),
         },
         Target {
-            uri: "poop".to_string(),
-            matcher: Matcher::AnyChange,
+            uri: "https://whitney.org/about/job-postings".to_string(),
+            text: "Curator".to_string(),
         },
+        // moma website isn't letting us scrape -- sad/
+        //
+        // Target {
+        //    uri: "https://www.moma.org/about/careers/jobs".to_string(),
+        //    text: "Moma".to_string(),
+        //},
     ]);
     s.start()
 }

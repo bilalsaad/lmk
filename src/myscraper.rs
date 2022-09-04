@@ -9,12 +9,8 @@ use std::io::prelude::*;
 pub struct Target {
     // The uri the scraper should scrape. Note that this serves as the ID of thes
     pub uri: String,
-    pub matcher: Matcher,
-}
-
-pub enum Matcher {
-    AnyChange,
-    TextMatch(String, Box<dyn Fn(&str) -> ()>),
+    // The text to search in the html content of `uri`.
+    pub text: String,
 }
 
 pub struct Scraper {
@@ -50,33 +46,11 @@ where
     I: Iterator<Item = &'a str>,
 {
     let file = target.uri.replace("/", "_");
-    let matcher = &target.matcher;
     let old_contents = match fs::read_to_string(&file) {
         Ok(x) => x,
         _ => "".to_string(),
     };
-    eprintln!("old contents: {}", old_contents);
     let old_matches: HashSet<_> = old_contents.lines().collect();
-
-    // Look up old content and compare
-    let matches = content
-        .filter_map(|x| {
-            // custom matcher(s) for document id
-            match &matcher {
-                Matcher::TextMatch(match_text, _) => {
-                    if x.contains(match_text) {
-                        Some(x)
-                    } else {
-                        None
-                    }
-                }
-                Matcher::AnyChange => {
-                    // TODO: look up old version and compare
-                    None
-                }
-            }
-        })
-        .unique();
 
     // Writes matches to the file
     let mut file = match OpenOptions::new().append(true).create(true).open(&file) {
@@ -86,22 +60,31 @@ where
             None
         }
     };
-
-    // Invoke callback on new matches only.
-    matches.filter(|x| !old_matches.contains(x)).for_each(|x| {
-        if let Matcher::TextMatch(_, f) = &matcher {
-            f(x);
+    // Look up old content and compare
+    content
+        .filter_map(|x| {
+            if x.contains(&target.text) {
+                Some(x)
+            } else {
+                None
+            }
+        })
+        .unique()
+        .map(|x| {
             if let Some(ff) = &mut file {
-                // todo reduce nesting
                 if let Err(e) = writeln!(ff, "{}", x) {
                     eprintln!(
                         "Failed to write match {} for target {}. err: {}",
                         x, &target.uri, e
-                    );
+                        );
                 }
             }
-        }
-    });
+            x
+        })
+        .filter(|x| !old_matches.contains(x))
+        .for_each(|x| println!("found {}", x));
+
+
     // Look over all text in content and look for matches. Generate match notifications for any
     // matches.
     Ok(())
