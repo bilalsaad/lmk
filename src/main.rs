@@ -1,4 +1,4 @@
-use crate::myscraper::{Target};
+use crate::myscraper::Target;
 
 mod myscraper;
 

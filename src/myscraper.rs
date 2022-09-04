@@ -76,14 +76,13 @@ where
                     eprintln!(
                         "Failed to write match {} for target {}. err: {}",
                         x, &target.uri, e
-                        );
+                    );
                 }
             }
             x
         })
         .filter(|x| !old_matches.contains(x))
         .for_each(|x| println!("found {}", x));
-
 
     // Look over all text in content and look for matches. Generate match notifications for any
     // matches.
