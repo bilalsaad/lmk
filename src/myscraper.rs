@@ -13,13 +13,31 @@ pub struct Target {
     pub text: String,
 }
 
+// Sender sends messages to the given addr.
+// User can provide implementations that email, log or print matches.
+pub trait Sender {
+    fn send(&self, addr: &str, target: &Target, msg: String);
+}
+
+struct PrintSender {}
+
+impl Sender for PrintSender {
+    fn send(&self, addr: &str, t: &Target, msg: String) {
+        println!("[to {}] Target {}. msg: \n {}", addr, t.uri, msg);
+    }
+}
+
 pub struct Scraper {
     targets: Vec<Target>,
+    sender: Box<dyn Sender>,
 }
 
 impl Scraper {
     pub fn new(targets: Vec<Target>) -> Scraper {
-        Scraper { targets }
+        Scraper {
+            targets,
+            sender: Box::new(PrintSender {}),
+        }
     }
 
     pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -32,60 +50,69 @@ impl Scraper {
                     continue;
                 }
             };
-            handle_page_content(resp, &t)?;
+            self.handle_page_content(resp, &t)?;
         }
         Ok(())
     }
-}
 
-// Checks content for any matches. For each encountered match a notification event is generated.
-// Note that if content has not changed since last handling, no notifcations are generated.
-fn handle_page_content(page: Html, target: &Target) -> Result<(), Box<dyn std::error::Error>> {
-    let selector = Selector::parse("*").unwrap();
-    let content = page.select(&selector).flat_map(|x| x.text());
-    // We create a file with the sname name as the uri, but with _ instead of //
-    // this file serves as a cache of what the last time we ran this on this uri.
-    let file = target.uri.replace("/", "_");
-    let old_contents = match fs::read_to_string(&file) {
-        Ok(x) => x,
-        // if there isn't a file we just assume a clean slate of matches.
-        _ => "".to_string(),
-    };
-    let old_matches: HashSet<_> = old_contents.lines().collect();
+    // Checks content for any matches. For each encountered match a notification event is generated.
+    // Note that if content has not changed since last handling, no notifcations are generated.
+    fn handle_page_content(
+        &self,
+        page: Html,
+        target: &Target,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let selector = Selector::parse("*").unwrap();
+        let content = page.select(&selector).flat_map(|x| x.text());
+        // We create a file with the sname name as the uri, but with _ instead of //
+        // this file serves as a cache of what the last time we ran this on this uri.
+        let file = target.uri.replace("/", "_");
+        let old_contents = match fs::read_to_string(&file) {
+            Ok(x) => x,
+            // if there isn't a file we just assume a clean slate of matches.
+            _ => "".to_string(),
+        };
+        let old_matches: HashSet<_> = old_contents.lines().collect();
 
-    // We open the file for writing so we can write the new state to the file.
-    let mut file = match OpenOptions::new().append(true).create(true).open(&file) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            eprintln!("Failed to open cache file for {}, err: {}", &target.uri, e);
-            None
-        }
-    };
-    // Look up old content and compare
-    content
-        .filter_map(|x| {
-            if x.contains(&target.text) {
-                Some(x)
-            } else {
+        // We open the file for writing so we can write the new state to the file.
+        let mut file = match OpenOptions::new().append(true).create(true).open(&file) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("Failed to open cache file for {}, err: {}", &target.uri, e);
                 None
             }
-        })
-        .unique()
-        .map(|x| {
-            if let Some(ff) = &mut file {
-                if let Err(e) = writeln!(ff, "{}", x) {
-                    eprintln!(
-                        "Failed to write match {} for target {}. err: {}",
-                        x, &target.uri, e
-                    );
+        };
+        // Look up old content and compare
+        content
+            .filter_map(|x| {
+                if x.contains(&target.text) {
+                    Some(x)
+                } else {
+                    None
                 }
-            }
-            x
-        })
-        .filter(|x| !old_matches.contains(x))
-        .for_each(|x| println!("found {}", x));
-
-    Ok(())
+            })
+            .unique()
+            .map(|x| {
+                if let Some(ff) = &mut file {
+                    if let Err(e) = writeln!(ff, "{}", x) {
+                        eprintln!(
+                            "Failed to write match {} for target {}. err: {}",
+                            x, &target.uri, e
+                        );
+                    }
+                }
+                x
+            })
+            .filter(|x| !old_matches.contains(x))
+            .for_each(|x| {
+                self.sender.send(
+                    "everyone@everyone.com",
+                    &target,
+                    format!("Found match: {}", x),
+                )
+            });
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -99,18 +126,22 @@ mod tests {
             uri: "test_handle_page_content_uri".to_string(),
             text: "meow".to_string(),
         };
+        // TODO- don't write real files -- this cache should be an implementation detail
+        let cache_file = target.uri.clone();
+        // todo- figure out a better way to create the dummy scraper
+        let scraper = Scraper::new(vec![]);
         let html = Html::parse_document(
             r#"
          <li> meow </li>
          <li> cactus </li>
         "#,
         );
-        handle_page_content(html.clone(), &target)?;
+        scraper.handle_page_content(html.clone(), &target)?;
         // TODO- don't write real files -- this cache should be an implementation detail
-        fs::remove_file(&target.uri)?;
+        fs::remove_file(&cache_file)?;
         // run again after deleting file should be okay
-        handle_page_content(html.clone(), &target)?;
-        fs::remove_file(&target.uri)?;
+        scraper.handle_page_content(html.clone(), &target)?;
+        fs::remove_file(&cache_file)?;
         Ok(())
     }
 
@@ -120,15 +151,16 @@ mod tests {
             uri: "test_handle_page_content_caches".to_string(),
             text: "meow".to_string(),
         };
+        let scraper = Scraper::new(vec![]);
         let html = Html::parse_document(
             r#"
          <li> meow </li>
          <li> cactus </li>
         "#,
         );
-        handle_page_content(html.clone(), &target)?;
+        scraper.handle_page_content(html.clone(), &target)?;
         // second call should have no matches.
-        handle_page_content(html.clone(), &target)?;
+        scraper.handle_page_content(html.clone(), &target)?;
         fs::remove_file(&target.uri)?;
         Ok(())
     }
