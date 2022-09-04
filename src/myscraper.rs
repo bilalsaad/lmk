@@ -24,7 +24,6 @@ impl Scraper {
 
     pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         // make async
-        let selector = Selector::parse("*").unwrap();
         for t in &self.targets {
             let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
                 Ok(Ok(x)) => Html::parse_document(&x),
@@ -33,7 +32,7 @@ impl Scraper {
                     continue;
                 }
             };
-            handle_page_content(resp.select(&selector).flat_map(|x| x.text()), &t)?;
+            handle_page_content(resp, &t)?;
         }
         Ok(())
     }
@@ -41,18 +40,20 @@ impl Scraper {
 
 // Checks content for any matches. For each encountered match a notification event is generated.
 // Note that if content has not changed since last handling, no notifcations are generated.
-fn handle_page_content<'a, I>(content: I, target: &Target) -> Result<(), Box<dyn std::error::Error>>
-where
-    I: Iterator<Item = &'a str>,
-{
+fn handle_page_content(page: Html, target: &Target) -> Result<(), Box<dyn std::error::Error>> {
+    let selector = Selector::parse("*").unwrap();
+    let content = page.select(&selector).flat_map(|x| x.text());
+    // We create a file with the sname name as the uri, but with _ instead of //
+    // this file serves as a cache of what the last time we ran this on this uri.
     let file = target.uri.replace("/", "_");
     let old_contents = match fs::read_to_string(&file) {
         Ok(x) => x,
+        // if there isn't a file we just assume a clean slate of matches.
         _ => "".to_string(),
     };
     let old_matches: HashSet<_> = old_contents.lines().collect();
 
-    // Writes matches to the file
+    // We open the file for writing so we can write the new state to the file.
     let mut file = match OpenOptions::new().append(true).create(true).open(&file) {
         Ok(f) => Some(f),
         Err(e) => {
@@ -84,7 +85,51 @@ where
         .filter(|x| !old_matches.contains(x))
         .for_each(|x| println!("found {}", x));
 
-    // Look over all text in content and look for matches. Generate match notifications for any
-    // matches.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_handle_page_content() -> Result<(), Box<dyn std::error::Error>> {
+        let target = Target {
+            uri: "test_handle_page_content_uri".to_string(),
+            text: "meow".to_string(),
+        };
+        let html = Html::parse_document(
+            r#"
+         <li> meow </li>
+         <li> cactus </li>
+        "#,
+        );
+        handle_page_content(html.clone(), &target)?;
+        // TODO- don't write real files -- this cache should be an implementation detail
+        fs::remove_file(&target.uri)?;
+        // run again after deleting file should be okay
+        handle_page_content(html.clone(), &target)?;
+        fs::remove_file(&target.uri)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_handle_page_content_caches() -> Result<(), Box<dyn std::error::Error>> {
+        let target = Target {
+            uri: "test_handle_page_content_caches".to_string(),
+            text: "meow".to_string(),
+        };
+        let html = Html::parse_document(
+            r#"
+         <li> meow </li>
+         <li> cactus </li>
+        "#,
+        );
+        handle_page_content(html.clone(), &target)?;
+        // second call should have no matches.
+        handle_page_content(html.clone(), &target)?;
+        fs::remove_file(&target.uri)?;
+        Ok(())
+    }
 }
