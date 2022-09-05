@@ -19,7 +19,8 @@ pub trait Sender {
     fn send(&self, addr: &str, target: &Target, msg: String);
 }
 
-struct PrintSender {}
+/// Sender implementation that just calls println with arguments.
+pub struct PrintSender {}
 
 impl Sender for PrintSender {
     fn send(&self, addr: &str, t: &Target, msg: String) {
@@ -27,17 +28,17 @@ impl Sender for PrintSender {
     }
 }
 
-pub struct Scraper {
+pub struct Scraper<'a, S> {
     targets: Vec<Target>,
-    sender: Box<dyn Sender>,
+    sender: &'a S,
 }
 
-impl Scraper {
-    pub fn new(targets: Vec<Target>) -> Scraper {
-        Scraper {
-            targets,
-            sender: Box::new(PrintSender {}),
-        }
+impl<'a, S> Scraper<'a, S>
+where
+    S: Sender,
+{
+    pub fn new(targets: Vec<Target>, sender: &'a S) -> Scraper<'a, S> {
+        Scraper { targets, sender }
     }
 
     pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -118,7 +119,28 @@ impl Scraper {
 #[cfg(test)]
 mod tests {
 
+    use std::cell::RefCell;
+
     use super::*;
+
+    struct FakeSender {
+        // messages sent to this fake sender
+        msgs: RefCell<Vec<String>>,
+    }
+    impl FakeSender {
+        fn new() -> Self {
+            FakeSender {
+                msgs: RefCell::new(vec![]),
+            }
+        }
+    }
+    impl Sender for FakeSender {
+        fn send(&self, addr: &str, t: &Target, msg: String) {
+            self.msgs
+                .borrow_mut()
+                .push(format!("[to {}] Target {}. msg: \n {}", addr, t.uri, msg));
+        }
+    }
 
     #[test]
     fn test_handle_page_content() -> Result<(), Box<dyn std::error::Error>> {
@@ -128,19 +150,28 @@ mod tests {
         };
         // TODO- don't write real files -- this cache should be an implementation detail
         let cache_file = target.uri.clone();
+        // make sure we're running fresh without a leftover cached file
+        let _ = fs::remove_file(&cache_file);
         // todo- figure out a better way to create the dummy scraper
-        let scraper = Scraper::new(vec![]);
+        let sender = FakeSender::new();
+        let scraper = Scraper::new(vec![], &sender);
         let html = Html::parse_document(
             r#"
+            <html>
          <li> meow </li>
          <li> cactus </li>
+         <li> meow mathew </li>
+            </html>
         "#,
         );
+        // The first scrape should give us one matching meow.
         scraper.handle_page_content(html.clone(), &target)?;
-        // TODO- don't write real files -- this cache should be an implementation detail
+        assert_eq!(sender.msgs.borrow().len(), 2);
+
         fs::remove_file(&cache_file)?;
-        // run again after deleting file should be okay
+        // run again after deleting file, should have another match.
         scraper.handle_page_content(html.clone(), &target)?;
+        assert_eq!(sender.msgs.borrow().len(), 4);
         fs::remove_file(&cache_file)?;
         Ok(())
     }
@@ -151,7 +182,8 @@ mod tests {
             uri: "test_handle_page_content_caches".to_string(),
             text: "meow".to_string(),
         };
-        let scraper = Scraper::new(vec![]);
+        let sender = FakeSender::new();
+        let scraper = Scraper::new(vec![], &sender);
         let html = Html::parse_document(
             r#"
          <li> meow </li>
@@ -159,8 +191,22 @@ mod tests {
         "#,
         );
         scraper.handle_page_content(html.clone(), &target)?;
-        // second call should have no matches.
+        // One message for the meow.
+        assert_eq!(sender.msgs.borrow().len(), 1);
+        // let's update the html to include a new element. A message should only be added for the
+        // new one.
+        let html = Html::parse_document(
+            r#"
+         <li> meow </li>
+         <li> cactus </li>
+         <li> another meow!!!! </li>
+        "#,
+        );
         scraper.handle_page_content(html.clone(), &target)?;
+        // Only an additional message should be appended.
+        assert_eq!(sender.msgs.borrow().len(), 2);
+        // New message should be different than the first.
+        assert_ne!(sender.msgs.borrow()[0], sender.msgs.borrow()[1]);
         fs::remove_file(&target.uri)?;
         Ok(())
     }
