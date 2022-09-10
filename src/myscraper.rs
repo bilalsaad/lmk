@@ -76,7 +76,12 @@ where
         let old_matches: HashSet<_> = old_contents.lines().collect();
 
         // We open the file for writing so we can write the new state to the file.
-        let mut file = match OpenOptions::new().append(true).create(true).open(&file) {
+        let mut file = match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&file)
+        {
             Ok(f) => Some(f),
             Err(e) => {
                 eprintln!("Failed to open cache file for {}, err: {}", &target.uri, e);
@@ -309,13 +314,14 @@ mod tests {
         assert!(sender.msgs.borrow()[1].contains("new meow who dis"));
 
         scraper.start()?;
-        // TODO: renable this part once we remove stale matches from the files
-        /*
         assert_eq!(sender.msgs.borrow().len(), 3);
         // Expect one match for target1 and one match for target 2
-        assert!(sender.msgs.borrow()[2].contains("meow-meow"),
-         "got {} want {}", sender.msgs.borrow()[2], "meow-meow");
-         */
+        assert!(
+            sender.msgs.borrow()[2].contains("meow-meow"),
+            "got {} want {}",
+            sender.msgs.borrow()[2],
+            "meow-meow"
+        );
 
         Ok(())
     }
