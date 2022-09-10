@@ -118,7 +118,8 @@ where
 
 #[cfg(test)]
 mod tests {
-
+    use httptest::cycle;
+    use httptest::{matchers::request, responders::status_code, Expectation};
     use std::cell::RefCell;
 
     use super::*;
@@ -208,6 +209,114 @@ mod tests {
         // New message should be different than the first.
         assert_ne!(sender.msgs.borrow()[0], sender.msgs.borrow()[1]);
         fs::remove_file(&target.uri)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_real_http_server() -> Result<(), Box<dyn std::error::Error>> {
+        let server = httptest::Server::run();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/target1"))
+                .times(..) // any number.
+                .respond_with(status_code(200).body("meow-meow")),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/target2"))
+                .times(..)
+                .respond_with(status_code(200).body("cat-meow")),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/i-don't-exist"))
+                .times(..)
+                .respond_with(status_code(404)),
+        );
+
+        let target1 = Target {
+            uri: server.url_str("/target1"),
+            text: "meow".to_string(),
+        };
+        let target2 = Target {
+            uri: server.url_str("/target2"),
+            text: "cat".to_string(),
+        };
+        let target3 = Target {
+            uri: server.url_str("/i-don't-exist"),
+            text: "cactus".to_string(),
+        };
+        let sender = FakeSender::new();
+        let scraper = Scraper::new(vec![target1, target2, target3], &sender);
+
+        scraper.start()?;
+        // We should have match for target1 and target2.
+        assert_eq!(sender.msgs.borrow().len(), 2);
+        // Expect one match for target1 and one match for target 2
+        assert_eq!(
+            sender
+                .msgs
+                .borrow()
+                .iter()
+                .filter(|x| x.contains("target1"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            sender
+                .msgs
+                .borrow()
+                .iter()
+                .filter(|x| x.contains("target2"))
+                .count(),
+            1
+        );
+
+        // Run another iteration and expect no messages.
+        scraper.start()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_real_http_server_content_change() -> Result<(), Box<dyn std::error::Error>> {
+        let server = httptest::Server::run();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/target"))
+                .times(..) // any number.
+                .respond_with(cycle![
+                    status_code(200).body("meow-meow"),
+                    status_code(200).body("new meow who dis")
+                ]),
+        );
+
+        let target = Target {
+            uri: server.url_str("/target"),
+            text: "meow".to_string(),
+        };
+        let sender = FakeSender::new();
+        let scraper = Scraper::new(vec![target], &sender);
+
+        scraper.start()?;
+        // We should have match for target.
+        assert_eq!(sender.msgs.borrow().len(), 1);
+        // Expect one match for target1 and one match for target 2
+        assert!(sender.msgs.borrow()[0].contains("meow-meow"));
+
+        // Run another iteration and expect another match
+        scraper.start()?;
+        assert_eq!(sender.msgs.borrow().len(), 2);
+        // Expect one match for target1 and one match for target 2
+        assert!(sender.msgs.borrow()[1].contains("new meow who dis"));
+
+        scraper.start()?;
+        // TODO: renable this part once we remove stale matches from the files
+        /*
+        assert_eq!(sender.msgs.borrow().len(), 3);
+        // Expect one match for target1 and one match for target 2
+        assert!(sender.msgs.borrow()[2].contains("meow-meow"),
+         "got {} want {}", sender.msgs.borrow()[2], "meow-meow");
+         */
+
         Ok(())
     }
 }
