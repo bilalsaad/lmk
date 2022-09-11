@@ -6,6 +6,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 
+#[derive(Debug)]
 pub struct Target {
     // The uri the scraper should scrape. Note that this serves as the ID of thes
     pub uri: String,

@@ -1,9 +1,12 @@
-use crate::myscraper::{PrintSender, Target};
+use crate::myscraper::Target;
+use crate::telegramsender::TelegramSender;
 
 mod myscraper;
+mod telegramsender;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let sender = PrintSender {};
+    // TODO don't hardcode the ChatID
+    let sender = TelegramSender::new(-727046961).unwrap();
     let s = myscraper::Scraper::new(
         vec![
             Target {
