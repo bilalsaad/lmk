@@ -41,7 +41,8 @@ where
         Scraper { targets, sender }
     }
 
-    pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+    // scrape runs a single scraping iteration, reporting any matches on targets to sender.
+    pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
         // make async
         for t in &self.targets {
             let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
@@ -252,7 +253,7 @@ mod tests {
         let sender = FakeSender::new();
         let scraper = Scraper::new(vec![target1, target2, target3], &sender);
 
-        scraper.start()?;
+        scraper.scrape()?;
         // We should have match for target1 and target2.
         assert_eq!(sender.msgs.borrow().len(), 2);
         // Expect one match for target1 and one match for target 2
@@ -276,7 +277,7 @@ mod tests {
         );
 
         // Run another iteration and expect no messages.
-        scraper.start()?;
+        scraper.scrape()?;
 
         Ok(())
     }
@@ -301,19 +302,19 @@ mod tests {
         let sender = FakeSender::new();
         let scraper = Scraper::new(vec![target], &sender);
 
-        scraper.start()?;
+        scraper.scrape()?;
         // We should have match for target.
         assert_eq!(sender.msgs.borrow().len(), 1);
         // Expect one match for target1 and one match for target 2
         assert!(sender.msgs.borrow()[0].contains("meow-meow"));
 
         // Run another iteration and expect another match
-        scraper.start()?;
+        scraper.scrape()?;
         assert_eq!(sender.msgs.borrow().len(), 2);
         // Expect one match for target1 and one match for target 2
         assert!(sender.msgs.borrow()[1].contains("new meow who dis"));
 
-        scraper.start()?;
+        scraper.scrape()?;
         assert_eq!(sender.msgs.borrow().len(), 3);
         // Expect one match for target1 and one match for target 2
         assert!(

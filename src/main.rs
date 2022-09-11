@@ -23,5 +23,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         &sender,
     );
-    s.start()
+    s.scrape()
 }
