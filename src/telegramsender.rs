@@ -3,7 +3,7 @@ use tokio::runtime::Runtime;
 
 use crate::myscraper::{Sender, Target};
 
-// A Teloxide telegram bot sender. Requires that env variable of TELOXIDE_TOKEN 
+// A Teloxide telegram bot sender. Requires that env variable of TELOXIDE_TOKEN
 // being set e.g, $ export TELOXIDE_TOKEN=<Your token here>
 pub struct TelegramSender {
     // Telegram chat id that all messages are sent to, provided in `new` method.
