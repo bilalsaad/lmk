@@ -47,7 +47,7 @@
 #   text: Curator
 #
 
-# TODO: this one is bit buggy
+# TODO: this one is bit buggy, keeps bringing a match over and over (doesn't respect that something didn't change).
 #- uri: https://www.momaps1.org/about/jobs
 #  text: Curator
     
