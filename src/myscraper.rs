@@ -1,12 +1,13 @@
 use itertools::Itertools;
 use scraper::Html;
 use scraper::Selector;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Target {
     // The uri the scraper should scrape. Note that this serves as the ID of thes
     pub uri: String,
@@ -324,6 +325,52 @@ mod tests {
             sender.msgs.borrow()[2],
             "meow-meow"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_deserialize_target() -> Result<(), Box<dyn std::error::Error>> {
+        let t = Target {
+            uri: "a".to_string(),
+            text: "b".to_string(),
+        };
+        let serialized = serde_yaml::to_string(&t).unwrap();
+
+        assert!(serialized.contains("uri: a"));
+        assert!(serialized.contains("text: b"));
+
+        let deserialized: Target = serde_yaml::from_str(&serialized)?;
+        assert_eq!(t, deserialized);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_deserialize_multiple_targets() -> Result<(), Box<dyn std::error::Error>> {
+        let t = vec![
+            Target {
+                uri: "a".to_string(),
+                text: "b".to_string(),
+            },
+            Target {
+                uri: "a".to_string(),
+                text: "b".to_string(),
+            },
+            Target {
+                uri: "c".to_string(),
+                text: "d".to_string(),
+            },
+        ];
+        let serialized = serde_yaml::to_string(&t).unwrap();
+
+        assert!(serialized.contains("uri: a"));
+        assert!(serialized.contains("text: b"));
+        assert!(serialized.contains("uri: c"));
+        assert!(serialized.contains("text: d"));
+
+        let deserialized: Vec<Target> = serde_yaml::from_str(&serialized)?;
+        assert_eq!(deserialized.len(), 3);
 
         Ok(())
     }

@@ -1,0 +1,54 @@
+# Targets file format is
+#   uri: https://...
+#   text: text to look for.
+
+
+# Brooklyn museum curator positons
+- uri: https://www.brooklynmuseum.org/about/careers
+  text: Curator
+
+- uri: https://whitney.org/about/job-postings
+  text: Curator
+
+- uri: https://www.sculpture-center.org/support/7157/jobs-and-internships
+  text: Curator
+
+- uri: https://www.cooperhewitt.org/careers/
+  text: Curator
+
+- uri: https://www.newmuseum.org/pages/view/careers
+  text: Curator
+    
+- uri: https://www.icp.org/jobs
+  text: Curator
+
+# Websutes that did not work
+#  - Moma
+#  - Met 
+#  - The frick 
+#  - Artist space -- no carreers page
+#  - Moma ps1 is buggy..
+
+
+# TODO: Look into this one, not sure how to scrape
+#- uri: https://metmuseum.wd5.myworkdayjobs.com/en-US/metmuseumcareers?jobFamily=798df4ae1dba10c19e274fd1c4882abe
+#  text: Curator
+# The moma has a cloudflare protection thing that doesn't let us scrape it :(
+#- uri: https://www.moma.org/about/careers/jobs
+#  text: Curator
+
+## TODO: This one didn't work either -- couldn;t resolve host
+#- uri: https://www.frick.org/careers
+#  text: Curator
+#
+#
+# TODO: javascript something..
+# - uri: https://www.guggenheim.org/careers
+#   text: Curator
+#
+
+# TODO: this one is bit buggy
+#- uri: https://www.momaps1.org/about/jobs
+#  text: Curator
+    
+

@@ -4,6 +4,10 @@ use crate::telegramsender::TelegramSender;
 use clap::Parser;
 use myscraper::PrintSender;
 
+use std::fs::File;
+use std::io::BufReader;
+use std::path::Path;
+
 mod myscraper;
 mod telegramsender;
 
@@ -33,25 +37,20 @@ struct Args {
     telegram_chat_id: i64,
 }
 
+fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::error::Error>> {
+    // Open the file in read-only mode with buffer.
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    let targets = serde_yaml::from_reader(reader)?;
+
+    Ok(targets)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let targets = vec![
-        Target {
-            uri: "https://www.brooklynmuseum.org/about/careers".to_string(),
-            text: "Curator".to_string(),
-        },
-        Target {
-            uri: "https://whitney.org/about/job-postings".to_string(),
-            text: "Curator".to_string(),
-        },
-        // moma website isn't letting us scrape -- sad/
-        //
-        // Target {
-        //    uri: "https://www.moma.org/about/careers/jobs".to_string(),
-        //    text: "Moma".to_string(),
-        //},
-    ];
+    let targets = read_targets("targets.yaml")?;
     match args.reporting.as_str() {
         "print" => {
             let sender = PrintSender {};
