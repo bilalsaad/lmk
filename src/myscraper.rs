@@ -7,12 +7,14 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct Target {
     // The uri the scraper should scrape. Note that this serves as the ID of thes
     pub uri: String,
     // The text to search in the html content of `uri`.
     pub text: String,
+    // Description of what the target is, only for humans.
+    pub description: String,
 }
 
 // Sender sends messages to the given addr.
@@ -30,9 +32,41 @@ impl Sender for PrintSender {
     }
 }
 
+// Writes <timestamp, target, ...> metrics.
+// Metrics are appendded to scraper-metrics.csv
+struct Metrics {
+    // Path to log file. useful for overriding in tests.
+    log_file: &'static str,
+}
+
+impl Metrics {
+    const FILE_PATH: &str = "scraper-metrics.csv";
+    fn new() -> Self {
+        Metrics {
+            log_file: Metrics::FILE_PATH,
+        }
+    }
+
+    fn increment_num_requests(&self, target: &str, status: &str) {
+        let now = std::time::SystemTime::now();
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.log_file)
+        {
+            Ok(mut f) => match writeln!(f, "{:?},inc_req,{},{}", now, target, status) {
+                Ok(_) => (),
+                Err(e) => eprintln!("failed to write to metrics file: {}", e),
+            },
+            Err(e) => eprintln!("failed to open metrics file: {}", e),
+        }
+    }
+}
+
 pub struct Scraper<'a, S> {
     targets: Vec<Target>,
     sender: &'a S,
+    metrics: Metrics,
 }
 
 impl<'a, S> Scraper<'a, S>
@@ -40,7 +74,12 @@ where
     S: Sender,
 {
     pub fn new(targets: Vec<Target>, sender: &'a S) -> Scraper<'a, S> {
-        Scraper { targets, sender }
+        let metrics = Metrics::new();
+        Scraper {
+            targets,
+            sender,
+            metrics,
+        }
     }
 
     // scrape runs a single scraping iteration, reporting any matches on targets to sender.
@@ -48,8 +87,13 @@ where
         // make async
         for t in &self.targets {
             let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
-                Ok(Ok(x)) => Html::parse_document(&x),
+                Ok(Ok(x)) => {
+                    self.metrics.increment_num_requests(&t.uri, "OK");
+                    Html::parse_document(&x)
+                }
                 Ok(Err(e)) | Err(e) => {
+                    let status = e.status().map_or("unknown".to_string(), |s| s.to_string());
+                    self.metrics.increment_num_requests(&t.uri, &status);
                     eprintln!("failed to scrape {:?}, err: {:?}", t.uri, e);
                     continue;
                 }
@@ -156,6 +200,7 @@ mod tests {
         let target = Target {
             uri: "test_handle_page_content_uri".to_string(),
             text: "meow".to_string(),
+            ..Default::default()
         };
         // TODO- don't write real files -- this cache should be an implementation detail
         let cache_file = target.uri.clone();
@@ -190,6 +235,7 @@ mod tests {
         let target = Target {
             uri: "test_handle_page_content_caches".to_string(),
             text: "meow".to_string(),
+            ..Default::default()
         };
         let sender = FakeSender::new();
         let scraper = Scraper::new(vec![], &sender);
@@ -243,14 +289,17 @@ mod tests {
         let target1 = Target {
             uri: server.url_str("/target1"),
             text: "meow".to_string(),
+            ..Default::default()
         };
         let target2 = Target {
             uri: server.url_str("/target2"),
             text: "cat".to_string(),
+            ..Default::default()
         };
         let target3 = Target {
             uri: server.url_str("/i-don't-exist"),
             text: "cactus".to_string(),
+            ..Default::default()
         };
         let sender = FakeSender::new();
         let scraper = Scraper::new(vec![target1, target2, target3], &sender);
@@ -300,6 +349,7 @@ mod tests {
         let target = Target {
             uri: server.url_str("/target"),
             text: "meow".to_string(),
+            ..Default::default()
         };
         let sender = FakeSender::new();
         let scraper = Scraper::new(vec![target], &sender);
@@ -334,6 +384,7 @@ mod tests {
         let t = Target {
             uri: "a".to_string(),
             text: "b".to_string(),
+            ..Default::default()
         };
         let serialized = serde_yaml::to_string(&t).unwrap();
 
@@ -352,14 +403,17 @@ mod tests {
             Target {
                 uri: "a".to_string(),
                 text: "b".to_string(),
+                ..Default::default()
             },
             Target {
                 uri: "a".to_string(),
                 text: "b".to_string(),
+                ..Default::default()
             },
             Target {
                 uri: "c".to_string(),
                 text: "d".to_string(),
+                ..Default::default()
             },
         ];
         let serialized = serde_yaml::to_string(&t).unwrap();
