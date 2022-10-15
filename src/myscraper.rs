@@ -15,6 +15,7 @@ pub struct Target {
     // The text to search in the html content of `uri`.
     pub text: String,
     // Description of what the target is, only for humans.
+    #[serde(default)]
     pub description: String,
 }
 

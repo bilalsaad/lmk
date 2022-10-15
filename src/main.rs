@@ -11,6 +11,7 @@ use std::path::Path;
 mod myscraper;
 mod telegramsender;
 
+// TODO: this is unused because I couldn't figure out how to make the reporting flag turn into a nenum.
 #[derive(PartialEq, Debug)]
 pub enum Reporting {
     // Use a telegramsender::TelegramSender to report matches.
@@ -47,10 +48,12 @@ fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::err
     Ok(targets)
 }
 
+const TARGETS_PATH: &str = "targets.yaml";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let targets = read_targets("targets.yaml")?;
+    let targets = read_targets(TARGETS_PATH)?;
     match args.reporting.as_str() {
         "print" => {
             let sender = PrintSender {};
@@ -67,5 +70,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Unsupported flag value for reporting {}, only 'print|telegram' supported.",
             args.reporting
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serialze_targets() -> Result<(), Box<dyn std::error::Error>> {
+        read_targets(TARGETS_PATH).map(|_| ())
     }
 }
