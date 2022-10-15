@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::time::UNIX_EPOCH;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct Target {
@@ -48,7 +49,10 @@ impl Metrics {
     }
 
     fn increment_num_requests(&self, target: &str, status: &str) {
-        let now = std::time::SystemTime::now();
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         match OpenOptions::new()
             .create(true)
             .append(true)
