@@ -3,10 +3,12 @@ use scraper::Html;
 use scraper::Selector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs;
+use std::fmt::Write as OtherWrite;
 use std::fs::OpenOptions;
-use std::io::prelude::*;
+use std::io::Write;
 use std::time::UNIX_EPOCH;
+
+use crate::db::Db;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct Target {
@@ -72,6 +74,7 @@ pub struct Scraper<'a, S> {
     targets: Vec<Target>,
     sender: &'a S,
     metrics: Metrics,
+    target_cache: std::cell::RefCell<Db>,
 }
 
 impl<'a, S> Scraper<'a, S>
@@ -80,10 +83,25 @@ where
 {
     pub fn new(targets: Vec<Target>, sender: &'a S) -> Scraper<'a, S> {
         let metrics = Metrics::new();
+        let db_path = "./.scraper_target_cache.db";
+        let target_cache = std::cell::RefCell::new(Db::new(&db_path).unwrap());
         Scraper {
             targets,
             sender,
             metrics,
+            target_cache,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_in_memory(targets: Vec<Target>, sender: &'a S) -> Scraper<'a, S> {
+        let metrics = Metrics::new();
+        let target_cache = std::cell::RefCell::new(Db::new_in_memory().unwrap());
+        Scraper {
+            targets,
+            sender,
+            metrics,
+            target_cache,
         }
     }
 
@@ -108,6 +126,10 @@ where
         Ok(())
     }
 
+    fn target_id(target: &Target) -> String {
+        std::format!("{}:{}", target.uri, target.text)
+    }
+
     // Checks content for any matches. For each encountered match a notification event is generated.
     // Note that if content has not changed since last handling, no notifcations are generated.
     fn handle_page_content(
@@ -117,48 +139,32 @@ where
     ) -> Result<(), Box<dyn std::error::Error>> {
         let selector = Selector::parse("*").unwrap();
         let content = page.select(&selector).flat_map(|x| x.text());
-        // We create a file with the sname name as the uri, but with _ instead of //
-        // this file serves as a cache of what the last time we ran this on this uri.
-        let file = target.uri.replace("/", "_");
-        let old_contents = match fs::read_to_string(&file) {
-            Ok(x) => x,
-            // if there isn't a file we just assume a clean slate of matches.
-            _ => "".to_string(),
-        };
+        let cache_id = Self::target_id(target);
+        let old_contents = self
+            .target_cache
+            .borrow()
+            .get(&cache_id)
+            .unwrap_or("".into());
         let old_matches: HashSet<_> = old_contents.lines().collect();
 
-        // We open the file for writing so we can write the new state to the file.
-        let mut file = match OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&file)
-        {
-            Ok(f) => Some(f),
-            Err(e) => {
-                eprintln!("Failed to open cache file for {}, err: {}", &target.uri, e);
-                None
-            }
-        };
+        // cache_value will hold the up to date matching content for target.uri.
+        let mut cache_value = String::new();
         // Look up old content and compare
         content
             .filter_map(|x| {
+                // Get the elements that match `target.text`
                 if x.contains(&target.text) {
                     Some(x)
                 } else {
                     None
                 }
             })
+            // Dedup them
             .unique()
             .map(|x| {
-                if let Some(ff) = &mut file {
-                    if let Err(e) = writeln!(ff, "{}", x) {
-                        eprintln!(
-                            "Failed to write match {} for target {}. err: {}",
-                            x, &target.uri, e
-                        );
-                    }
-                }
+                // Write the matches into target_caches
+                // writing into a string can't fail.
+                writeln!(cache_value, "{}", x).unwrap();
                 x
             })
             .filter(|x| !old_matches.contains(x))
@@ -169,6 +175,9 @@ where
                     format!("Found match: {}", x),
                 )
             });
+        if let Err(e) = self.target_cache.borrow_mut().put(&cache_id, &cache_value) {
+            eprintln!("failed to write into target_cache: {}", e);
+        }
         Ok(())
     }
 }
@@ -207,13 +216,9 @@ mod tests {
             text: "meow".to_string(),
             ..Default::default()
         };
-        // TODO- don't write real files -- this cache should be an implementation detail
-        let cache_file = target.uri.clone();
-        // make sure we're running fresh without a leftover cached file
-        let _ = fs::remove_file(&cache_file);
         // todo- figure out a better way to create the dummy scraper
         let sender = FakeSender::new();
-        let scraper = Scraper::new(vec![], &sender);
+        let scraper = Scraper::new_in_memory(vec![], &sender);
         let html = Html::parse_document(
             r#"
             <html>
@@ -227,11 +232,11 @@ mod tests {
         scraper.handle_page_content(html.clone(), &target)?;
         assert_eq!(sender.msgs.borrow().len(), 2);
 
-        fs::remove_file(&cache_file)?;
-        // run again after deleting file, should have another match.
+        // run again after deleting the cache , should have another match.
+        let target_id = Scraper::<FakeSender>::target_id(&target);
+        scraper.target_cache.borrow_mut().put(&target_id, "")?;
         scraper.handle_page_content(html.clone(), &target)?;
         assert_eq!(sender.msgs.borrow().len(), 4);
-        fs::remove_file(&cache_file)?;
         Ok(())
     }
 
@@ -243,7 +248,7 @@ mod tests {
             ..Default::default()
         };
         let sender = FakeSender::new();
-        let scraper = Scraper::new(vec![], &sender);
+        let scraper = Scraper::new_in_memory(vec![], &sender);
         let html = Html::parse_document(
             r#"
          <li> meow </li>
@@ -267,7 +272,6 @@ mod tests {
         assert_eq!(sender.msgs.borrow().len(), 2);
         // New message should be different than the first.
         assert_ne!(sender.msgs.borrow()[0], sender.msgs.borrow()[1]);
-        fs::remove_file(&target.uri)?;
         Ok(())
     }
 
@@ -307,7 +311,7 @@ mod tests {
             ..Default::default()
         };
         let sender = FakeSender::new();
-        let scraper = Scraper::new(vec![target1, target2, target3], &sender);
+        let scraper = Scraper::new_in_memory(vec![target1, target2, target3], &sender);
 
         scraper.scrape()?;
         // We should have match for target1 and target2.
@@ -357,7 +361,7 @@ mod tests {
             ..Default::default()
         };
         let sender = FakeSender::new();
-        let scraper = Scraper::new(vec![target], &sender);
+        let scraper = Scraper::new_in_memory(vec![target], &sender);
 
         scraper.scrape()?;
         // We should have match for target.

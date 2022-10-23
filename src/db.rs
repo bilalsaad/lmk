@@ -7,7 +7,17 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new() -> Result<Self> {
+    // Creates w/ the given sqllite3 file.
+    pub fn new(db_path: &str) -> Result<Self> {
+        let connection = Connection::open(db_path)?;
+        connection.execute(
+            "create table if not exists kv (key text unique, value text)",
+            (),
+        )?;
+        Ok(Db { connection })
+    }
+    #[cfg(test)]
+    pub fn new_in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory()?;
         connection.execute(
             "create table if not exists kv (key text unique, value text)",
@@ -44,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_simple() -> Result<(), Box<dyn std::error::Error>> {
-        let mut db = Db::new()?;
+        let mut db = Db::new_in_memory()?;
         assert_eq!(db.get("a"), None);
         db.put("a", "b")?;
         assert_eq!(db.get("b"), None);
@@ -54,7 +64,7 @@ mod tests {
 
     #[test]
     fn test_override() -> Result<(), Box<dyn std::error::Error>> {
-        let mut db = Db::new()?;
+        let mut db = Db::new_in_memory()?;
         db.put("a", "b")?;
         assert_eq!(db.get("a"), Some("b".to_string()));
         db.put("a", "q")?;
