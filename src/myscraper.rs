@@ -12,7 +12,7 @@ use crate::db::Db;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct Target {
-    // The uri the scraper should scrape. Note that this serves as the ID of thes
+    // The uri the scraper should scrape.
     pub uri: String,
     // The text to search in the html content of `uri`.
     pub text: String,
@@ -71,9 +71,13 @@ impl Metrics {
 }
 
 pub struct Scraper<'a, S> {
+    // The targets to scrape.
     targets: Vec<Target>,
+    // Used to send notifications.
     sender: &'a S,
+    // Metrics related to scraping.
     metrics: Metrics,
+    // Cache of Scraper::target_id(target) -> matching results.
     target_cache: std::cell::RefCell<Db>,
 }
 
