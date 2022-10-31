@@ -54,7 +54,10 @@ fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::err
 const TARGETS_PATH: &str = "targets.yaml";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
     let args = Args::parse();
+    log::info!("starting...");
+
 
 
     let targets = read_targets(TARGETS_PATH)?;

@@ -23,8 +23,8 @@ impl ScopedTimer {
 impl Drop for ScopedTimer {
     fn drop(&mut self) {
         match SystemTime::now().duration_since(self.start_time) {
-            Ok(elapsed) => eprintln!("ScopedTimer[{}],{:#?}", self.event_id, elapsed),
-            Err(e) => eprintln!("ScopedTimer[{}] failed to compute elapsed time {}", self.event_id, e)
+            Ok(elapsed) => log::info!("ScopedTimer[{}],{:#?}", self.event_id, elapsed),
+            Err(e) => log::error!("ScopedTimer[{}] failed to compute elapsed time {}", self.event_id, e)
         }
     }
 }
