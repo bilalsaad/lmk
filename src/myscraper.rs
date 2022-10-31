@@ -9,6 +9,7 @@ use std::io::Write;
 use std::time::UNIX_EPOCH;
 
 use crate::db::Db;
+use crate::scoped_timer::ScopedTimer;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct Target {
@@ -52,6 +53,7 @@ impl Metrics {
     }
 
     fn increment_num_requests(&self, target: &str, status: &str) {
+        let _timer = ScopedTimer::new("increment_num_requests".into());
         let now = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -112,7 +114,9 @@ where
     // scrape runs a single scraping iteration, reporting any matches on targets to sender.
     pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
         // make async
+        let _scrape_timer = ScopedTimer::new("scrape timer".into());
         for t in &self.targets {
+            let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
             let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
                 Ok(Ok(x)) => {
                     self.metrics.increment_num_requests(&t.uri, "OK");
@@ -141,6 +145,7 @@ where
         page: Html,
         target: &Target,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let _content_timer = ScopedTimer::new(format!("handle_page_content({})", target.uri));
         let selector = Selector::parse("*").unwrap();
         let content = page.select(&selector).flat_map(|x| x.text());
         let cache_id = Self::target_id(target);

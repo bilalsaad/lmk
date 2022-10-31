@@ -3,6 +3,7 @@ use crate::telegramsender::TelegramSender;
 
 use clap::Parser;
 use myscraper::PrintSender;
+use scoped_timer::ScopedTimer;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -11,6 +12,7 @@ use std::path::Path;
 mod db;
 mod myscraper;
 mod telegramsender;
+mod scoped_timer;
 
 // TODO: this is unused because I couldn't figure out how to make the reporting flag turn into a nenum.
 #[derive(PartialEq, Debug)]
@@ -54,14 +56,17 @@ const TARGETS_PATH: &str = "targets.yaml";
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+
     let targets = read_targets(TARGETS_PATH)?;
     match args.reporting.as_str() {
         "print" => {
+            let _timer = ScopedTimer::new("print scrape time".into());
             let sender = PrintSender {};
             let s = myscraper::Scraper::new(targets, &sender);
             s.scrape()
         }
         "telegram" => {
+            let _timer = ScopedTimer::new("telegram scrape time".into());
             let sender = TelegramSender::new(args.telegram_chat_id).unwrap();
             let s = myscraper::Scraper::new(targets, &sender);
             s.scrape()
