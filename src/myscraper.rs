@@ -115,27 +115,93 @@ where
     pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
         // make async
         let _scrape_timer = ScopedTimer::new("scrape timer".into());
+        let mut thread_handles = vec![];
         for t in &self.targets {
-            let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
-            let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
-                Ok(Ok(x)) => {
-                    self.metrics.increment_num_requests(&t.uri, "OK");
-                    Html::parse_document(&x)
+            let uri = t.uri.clone();
+            thread_handles.push(std::thread::spawn(move || {
+                let _timer = ScopedTimer::new(format!("scrape for {}", uri));
+                match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
+                    Ok(Ok(page)) => {
+                        let page = Html::parse_document(&page);
+                        // self.metrics.increment_num_requests(&t.uri, "OK");
+                        let selector = Selector::parse("*").unwrap();
+                        let content: Vec<String> = page.select(&selector)
+                            .flat_map(|x| x.text().into()).collect();
+                        return Some(content);
+                    }
+                    Ok(Err(e)) | Err(e) => {
+                        let status = e.status().map_or("unknown".to_string(), |s| s.to_string());
+                        // self.metrics.increment_num_requests(&t.uri, &status);
+                        log::warn!("failed to scrape {:?}, err: {:?}", t.uri, e);
+                        return None;
+                    }
                 }
-                Ok(Err(e)) | Err(e) => {
-                    let status = e.status().map_or("unknown".to_string(), |s| s.to_string());
-                    self.metrics.increment_num_requests(&t.uri, &status);
-                    eprintln!("failed to scrape {:?}, err: {:?}", t.uri, e);
-                    continue;
+            }));
+        }
+        for it in thread_handles.iter().zip(&self.targets) {
+            let (handle, t) = it;
+            match handle.join().unwrap() {
+                Some(resp) =>
+                    self.handle_page_content2(resp, &t)?,
+                None => {
+                    log::warn!("a scrape failed");
                 }
-            };
-            self.handle_page_content(resp, &t)?;
+            }
         }
         Ok(())
     }
 
     fn target_id(target: &Target) -> String {
         std::format!("{}:{}", target.uri, target.text)
+    }
+
+    fn handle_page_content2(
+        &self,
+        content: Vec<String>,
+        target: &Target,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let _content_timer = ScopedTimer::new(format!("handle_page_content2({})", target.uri));
+        let cache_id = Self::target_id(target);
+        let old_contents = self
+            .target_cache
+            .borrow()
+            .get(&cache_id)
+            .unwrap_or("".into());
+        let old_matches: HashSet<_> = old_contents.lines().collect();
+
+        // cache_value will hold the up to date matching content for target.uri.
+        let mut cache_value = String::new();
+        // Look up old content and compare
+        content
+            .into_iter()
+            .filter_map(|x| {
+                // Get the elements that match `target.text`
+                if x.contains(&target.text) {
+                    Some(x)
+                } else {
+                    None
+                }
+            })
+            // Dedup them
+            .unique()
+            .map(|x| {
+                // Write the matches into target_caches
+                // writing into a string can't fail.
+                writeln!(cache_value, "{}", x).unwrap();
+                x
+            })
+            .filter(|x| !old_matches.contains(x))
+            .for_each(|x| {
+                self.sender.send(
+                    "everyone@everyone.com",
+                    &target,
+                    format!("Found match: {}", x),
+                )
+            });
+        if let Err(e) = self.target_cache.borrow_mut().put(&cache_id, &cache_value) {
+            eprintln!("failed to write into target_cache: {}", e);
+        }
+        Ok(())
     }
 
     // Checks content for any matches. For each encountered match a notification event is generated.
