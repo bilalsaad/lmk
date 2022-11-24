@@ -11,8 +11,8 @@ use std::path::Path;
 
 mod db;
 mod myscraper;
-mod telegramsender;
 mod scoped_timer;
+mod telegramsender;
 
 // TODO: this is unused because I couldn't figure out how to make the reporting flag turn into a nenum.
 #[derive(PartialEq, Debug)]
@@ -57,8 +57,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
     let args = Args::parse();
     log::info!("starting...");
-
-
 
     let targets = read_targets(TARGETS_PATH)?;
     match args.reporting.as_str() {
