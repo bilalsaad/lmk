@@ -65,9 +65,9 @@ impl Metrics {
         {
             Ok(mut f) => match writeln!(f, "{:?},inc_req,{},{}", now, target, status) {
                 Ok(_) => (),
-                Err(e) => eprintln!("failed to write to metrics file: {}", e),
+                Err(e) => log::warn!("failed to write to metrics file: {}", e),
             },
-            Err(e) => eprintln!("failed to open metrics file: {}", e),
+            Err(e) => log::warn!("failed to open metrics file: {}", e),
         }
     }
 }
@@ -125,7 +125,7 @@ where
                 Ok(Err(e)) | Err(e) => {
                     let status = e.status().map_or("unknown".to_string(), |s| s.to_string());
                     self.metrics.increment_num_requests(&t.uri, &status);
-                    eprintln!("failed to scrape {:?}, err: {:?}", t.uri, e);
+                    log::warn!("failed to scrape {:?}, err: {:?}", t.uri, e);
                     continue;
                 }
             };
@@ -185,7 +185,7 @@ where
                 )
             });
         if let Err(e) = self.target_cache.borrow_mut().put(&cache_id, &cache_value) {
-            eprintln!("failed to write into target_cache: {}", e);
+            log::warn!("failed to write into target_cache: {}", e);
         }
         Ok(())
     }
