@@ -150,9 +150,6 @@ where
                     };
                 }));
             }
-            for handle in handles {
-                handle.join().unwrap();
-            }
             // We need to drop the sender before waiting on the receiver because after
             // all of the threads join the original sender is still alive and the receiver
             // won't stop until all senders are dropped. So we explicitly drop the sender
@@ -169,6 +166,10 @@ where
                         self.metrics.increment_num_requests(&t.uri, &e);
                     }
                 };
+            }
+
+            for handle in handles {
+                handle.join().unwrap();
             }
             Ok(())
         })
