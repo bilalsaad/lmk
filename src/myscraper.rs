@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::fmt::Write as OtherWrite;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::mpsc;
+use std::thread;
 use std::time::UNIX_EPOCH;
 
 use crate::db::Db;
@@ -83,6 +85,12 @@ pub struct Scraper<'a, S> {
     target_cache: std::cell::RefCell<Db>,
 }
 
+// ThreadMessage is an enum sent from the threads we spawn to do the requests.
+enum ThreadMessage {
+    Ok(String),
+    Err(String),
+}
+
 impl<'a, S> Scraper<'a, S>
 where
     S: Sender,
@@ -113,25 +121,57 @@ where
 
     // scrape runs a single scraping iteration, reporting any matches on targets to sender.
     pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // make async
         let _scrape_timer = ScopedTimer::new("scrape timer".into());
-        for t in &self.targets {
-            let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
-            let resp = match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
-                Ok(Ok(x)) => {
-                    self.metrics.increment_num_requests(&t.uri, "OK");
-                    Html::parse_document(&x)
-                }
-                Ok(Err(e)) | Err(e) => {
-                    let status = e.status().map_or("unknown".to_string(), |s| s.to_string());
-                    self.metrics.increment_num_requests(&t.uri, &status);
-                    log::warn!("failed to scrape {:?}, err: {:?}", t.uri, e);
-                    continue;
-                }
-            };
-            self.handle_page_content(resp, &t)?;
-        }
-        Ok(())
+        let (sender, receiver) = mpsc::channel();
+
+        // Spawn a scoped thread per target and do the http request in the thread.
+        // the html pages are returned via a `ThreadMessage, target` pair over a channel.
+        // Notes:
+        // - A scoped thread was needed due to lifetime constraints (otherwise the lifetime of self
+        // would need to be 'static'.
+        // - A threadpool would be better here, a thread per target could be costly. so a future
+        // improvement would be to do this in a thread pool or via async things.
+        thread::scope(|s| {
+            let mut handles = vec![];
+            for t in &self.targets {
+                let sender = sender.clone();
+                handles.push(s.spawn(move || {
+                    let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
+                    match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
+                        Ok(Ok(x)) => {
+                            let _ = sender.send((t, ThreadMessage::Ok(x)));
+                        }
+                        Ok(Err(e)) | Err(e) => {
+                            let status =
+                                e.status().map_or("unknown".to_string(), |s| s.to_string());
+                            let _ = sender.send((t, ThreadMessage::Err(status)));
+                            log::warn!("failed to scrape {:?}, err: {:?}", t.uri, e);
+                        }
+                    };
+                }));
+            }
+            for handle in handles {
+                handle.join().unwrap();
+            }
+            // We need to drop the sender before waiting on the receiver because after
+            // all of the threads join the original sender is still alive and the receiver
+            // won't stop until all senders are dropped. So we explicitly drop the sender
+            // I imagine there's a more idomatic way to do this.
+            drop(sender);
+            for (t, resp) in receiver {
+                match resp {
+                    ThreadMessage::Ok(resp) => {
+                        let page = Html::parse_document(&resp);
+                        self.handle_page_content(page, t)?;
+                        self.metrics.increment_num_requests(&t.uri, "OK");
+                    }
+                    ThreadMessage::Err(e) => {
+                        self.metrics.increment_num_requests(&t.uri, &e);
+                    }
+                };
+            }
+            Ok(())
+        })
     }
 
     fn target_id(target: &Target) -> String {
