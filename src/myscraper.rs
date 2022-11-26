@@ -158,7 +158,10 @@ where
             for (t, resp) in receiver {
                 match resp {
                     ThreadMessage::Ok(resp) => {
-                        let page = Html::parse_document(&resp);
+                        let page = {
+                            let _timer = ScopedTimer::new(format!("parse_docucment({})", t.uri));
+                            Html::parse_document(&resp)
+                        };
                         self.handle_page_content(page, t)?;
                         self.metrics.increment_num_requests(&t.uri, "OK");
                     }
@@ -199,32 +202,35 @@ where
 
         // cache_value will hold the up to date matching content for target.uri.
         let mut cache_value = String::new();
-        // Look up old content and compare
-        content
-            .filter_map(|x| {
-                // Get the elements that match `target.text`
-                if x.contains(&target.text) {
-                    Some(x)
-                } else {
-                    None
-                }
-            })
-            // Dedup them
-            .unique()
-            .map(|x| {
-                // Write the matches into target_caches
-                // writing into a string can't fail.
-                writeln!(cache_value, "{}", x).unwrap();
-                x
-            })
-            .filter(|x| !old_matches.contains(x))
-            .for_each(|x| {
-                self.sender.send(
-                    "everyone@everyone.com",
-                    &target,
-                    format!("Found match: {}", x),
-                )
-            });
+        {
+            let _timer = ScopedTimer::new(format!("lookup and compare for {}", target.uri));
+            // Look up old content and compare
+            content
+                .filter_map(|x| {
+                    // Get the elements that match `target.text`
+                    if x.contains(&target.text) {
+                        Some(x)
+                    } else {
+                        None
+                    }
+                })
+                // Dedup them
+                .unique()
+                .map(|x| {
+                    // Write the matches into target_caches
+                    // writing into a string can't fail.
+                    writeln!(cache_value, "{}", x).unwrap();
+                    x
+                })
+                .filter(|x| !old_matches.contains(x))
+                .for_each(|x| {
+                    self.sender.send(
+                        "everyone@everyone.com",
+                        &target,
+                        format!("Found match: {}", x),
+                    )
+                });
+        }
         if let Err(e) = self.target_cache.borrow_mut().put(&cache_id, &cache_value) {
             log::warn!("failed to write into target_cache: {}", e);
         }
