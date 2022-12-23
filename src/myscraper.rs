@@ -44,13 +44,54 @@ impl Sender for PrintSender {
 struct Metrics {
     // Path to log file. useful for overriding in tests.
     log_file: &'static str,
+    // Strings written to this channel will get written to log_file.
+    log_writer: mpsc::Sender<String>,
+    // thread that listens on the receiving and writes to the log_file.
+    writer_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Metrics {
     const FILE_PATH: &str = "scraper-metrics.csv";
     fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
         Metrics {
             log_file: Metrics::FILE_PATH,
+            log_writer: sender,
+            // TODO(bilal): This is weird, not sure to drop or join the thread correctly, but it
+            // seems to work
+            writer_thread: Some(thread::spawn(move || {
+                log::info!(
+                    "Starting metrics writing thread, writing to {}...",
+                    Metrics::FILE_PATH
+                );
+                let mut buffer: Vec<u8> = vec![];
+                let write_buffer = |buffer: &mut Vec<u8>| {
+                    log::info!("flushing buffer to file.. writing {} bytes", buffer.len());
+                    match OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(Metrics::FILE_PATH)
+                    {
+                        Ok(mut f) => match f.write_all(buffer) {
+                            Ok(_) => (),
+                            Err(e) => log::warn!("failed to write to metrics file: {}", e),
+                        },
+                        Err(e) => log::warn!("failed to open metrics file: {}", e),
+                    };
+                    buffer.clear()
+                };
+                for entry in receiver {
+                    log::info!("metrics-writer: Writing entry {}", entry);
+                    _ = writeln!(&mut buffer, "{}", entry);
+                    if buffer.len() > 256 {
+                        write_buffer(&mut buffer);
+                    }
+                }
+                if buffer.len() > 0 {
+                    write_buffer(&mut buffer);
+                }
+                log::info!("finished metrics writer thread...");
+            })),
         }
     }
 
@@ -60,16 +101,11 @@ impl Metrics {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.log_file)
+        if let Err(e) = self
+            .log_writer
+            .send(format!("{:?},inc_req,{},{}", now, target, status))
         {
-            Ok(mut f) => match writeln!(f, "{:?},inc_req,{},{}", now, target, status) {
-                Ok(_) => (),
-                Err(e) => log::warn!("failed to write to metrics file: {}", e),
-            },
-            Err(e) => log::warn!("failed to open metrics file: {}", e),
+            log::warn!("failed to write to log sink... {}", e);
         }
     }
 }
