@@ -91,6 +91,21 @@ impl Metrics {
         }
     }
 
+    #[cfg(test)]
+    fn new_in_memory() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Metrics {
+            log_writer: Some(sender),
+            writer_thread: Some(thread::spawn(move || {
+                eprintln!("Starting in memory metrics writing thread, writing to memory");
+                for entry in receiver {
+                    eprintln!("metrics-writer-in-memory: Writing entry {}", entry);
+                }
+                eprintln!("finished metrics writer thread...");
+            })),
+        }
+    }
+
     // Writes <timestamp>,inc_req,<target>,<status> to the log file.
     //
     // -timestmap is seconds since unix epoch
@@ -155,7 +170,7 @@ where
 
     #[cfg(test)]
     fn new_in_memory(targets: Vec<Target>, sender: &'a S) -> Scraper<'a, S> {
-        let metrics = Metrics::new();
+        let metrics = Metrics::new_in_memory();
         let target_cache = std::cell::RefCell::new(Db::new_in_memory().unwrap());
         Scraper {
             targets,
