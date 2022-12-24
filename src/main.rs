@@ -39,6 +39,11 @@ struct Args {
     /// Defaults to bilal's bot.
     #[arg(short, long, default_value_t = -727046961)]
     telegram_chat_id: i64,
+
+    /// Scraper Build ID -- git short commit ID of the version that this scraper ran as.
+    /// useful for figuring out what version ran etc...
+    #[arg(long)]
+    build_id: Option<String>,
 }
 
 fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::error::Error>> {
@@ -56,7 +61,11 @@ const TARGETS_PATH: &str = "targets.yaml";
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
     let args = Args::parse();
-    log::info!("starting...");
+    log::info!(
+        "starting build_id {}...",
+        args.build_id.unwrap_or("none".into())
+    );
+    return Ok(());
 
     let targets = read_targets(TARGETS_PATH)?;
     match args.reporting.as_str() {

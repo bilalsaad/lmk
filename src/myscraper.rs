@@ -42,23 +42,19 @@ impl Sender for PrintSender {
 // Writes <timestamp, target, ...> metrics.
 // Metrics are appendded to scraper-metrics.csv
 struct Metrics {
-    // Path to log file. useful for overriding in tests.
-    log_file: &'static str,
     // Strings written to this channel will get written to log_file.
-    log_writer: mpsc::Sender<String>,
+    log_writer: Option<mpsc::Sender<String>>,
     // thread that listens on the receiving and writes to the log_file.
     writer_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Metrics {
+    // TODO(bilal): See if you can make this configurable.
     const FILE_PATH: &str = "scraper-metrics.csv";
     fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
         Metrics {
-            log_file: Metrics::FILE_PATH,
-            log_writer: sender,
-            // TODO(bilal): This is weird, not sure to drop or join the thread correctly, but it
-            // seems to work
+            log_writer: Some(sender),
             writer_thread: Some(thread::spawn(move || {
                 log::info!(
                     "Starting metrics writing thread, writing to {}...",
@@ -95,6 +91,9 @@ impl Metrics {
         }
     }
 
+    // Writes <timestamp>,inc_req,<target>,<status> to the log file.
+    //
+    // -timestmap is seconds since unix epoch
     fn increment_num_requests(&self, target: &str, status: &str) {
         let _timer = ScopedTimer::new("increment_num_requests".into());
         let now = std::time::SystemTime::now()
@@ -103,10 +102,21 @@ impl Metrics {
             .as_secs();
         if let Err(e) = self
             .log_writer
+            .as_ref()
+            .unwrap()
             .send(format!("{:?},inc_req,{},{}", now, target, status))
         {
             log::warn!("failed to write to log sink... {}", e);
         }
+    }
+}
+
+impl Drop for Metrics {
+    fn drop(&mut self) {
+        log::info!("droping metrics...");
+        // Drop the sending channel, this will cause the log sink thread to stop.
+        drop(self.log_writer.take());
+        self.writer_thread.take().map(thread::JoinHandle::join);
     }
 }
 
