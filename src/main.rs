@@ -65,7 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "starting build_id {}...",
         args.build_id.unwrap_or("none".into())
     );
-    return Ok(());
 
     let targets = read_targets(TARGETS_PATH)?;
     match args.reporting.as_str() {
