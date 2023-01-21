@@ -3,6 +3,7 @@ use crate::telegramsender::TelegramSender;
 
 use clap::Parser;
 use myscraper::PrintSender;
+use opentelemetry::sdk::export::trace::stdout;
 use scoped_timer::ScopedTimer;
 
 use std::fs::File;
@@ -44,6 +45,11 @@ struct Args {
     /// useful for figuring out what version ran etc...
     #[arg(long)]
     build_id: Option<String>,
+
+    /// If true, we use the default jaeger tracing, if false the otel traces are pretty printed to
+    /// the stdout
+    #[arg(long, default_value_t = false)]
+    jaeger_tracing: bool,
 }
 
 fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::error::Error>> {
@@ -58,34 +64,58 @@ fn read_targets<P: AsRef<Path>>(path: P) -> Result<Vec<Target>, Box<dyn std::err
 
 const TARGETS_PATH: &str = "targets.yaml";
 
+use opentelemetry::trace::{TraceContextExt, Tracer};
+use opentelemetry::{global, KeyValue};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
     let args = Args::parse();
-    log::info!(
-        "starting build_id {}...",
-        args.build_id.unwrap_or("none".into())
-    );
-
-    let targets = read_targets(TARGETS_PATH)?;
-    match args.reporting.as_str() {
-        "print" => {
-            let _timer = ScopedTimer::new("print scrape time".into());
-            let sender = PrintSender {};
-            let s = myscraper::Scraper::new(targets, &sender);
-            s.scrape()
-        }
-        "telegram" => {
-            let _timer = ScopedTimer::new("telegram scrape time".into());
-            let sender = TelegramSender::new(args.telegram_chat_id).unwrap();
-            let s = myscraper::Scraper::new(targets, &sender);
-            s.scrape()
-        }
-        // TODO(bilal): return an actual error here..
-        _ => todo!(
-            "Unsupported flag value for reporting {}, only 'print|telegram' supported.",
-            args.reporting
-        ),
+    let build_id = args.build_id.unwrap_or("none".into());
+    log::info!("starting build_id {}...", build_id);
+    // jaeger tracing
+    if args.jaeger_tracing {
+        global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+        let _tracer = opentelemetry_jaeger::new_agent_pipeline()
+            .with_service_name("JobScraper")
+            .install_simple()?;
+    } else {
+        let _tracer = stdout::new_pipeline()
+            .with_pretty_print(true)
+            .install_simple();
     }
+
+    let tracer = global::tracer("scraper");
+
+    tracer.in_span("scrape-main", |cx| {
+        let targets = read_targets(TARGETS_PATH)?;
+        cx.span().set_attribute(KeyValue::new("build_id", build_id));
+        cx.span()
+            .set_attribute(KeyValue::new("targets_path", TARGETS_PATH));
+        cx.span()
+            .set_attribute(KeyValue::new("scrape-type", args.reporting.clone()));
+        match args.reporting.as_str() {
+            "print" => {
+                let _timer = ScopedTimer::new("print scrape time".into());
+                let sender = PrintSender {};
+                let s = myscraper::Scraper::new(targets, &sender);
+                s.scrape()
+            }
+            "telegram" => {
+                let _timer = ScopedTimer::new("telegram scrape time".into());
+                let sender = TelegramSender::new(args.telegram_chat_id).unwrap();
+                let s = myscraper::Scraper::new(targets, &sender);
+                s.scrape()
+            }
+            // TODO(bilal): return an actual error here..
+            _ => todo!(
+                "Unsupported flag value for reporting {}, only 'print|telegram' supported.",
+                args.reporting
+            ),
+        }
+    })?;
+    // Shutdown trace pipeline
+    global::shutdown_tracer_provider();
+    Ok(())
 }
 
 #[cfg(test)]

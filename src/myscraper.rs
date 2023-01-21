@@ -1,4 +1,9 @@
 use itertools::Itertools;
+use opentelemetry::global;
+use opentelemetry::trace::Span;
+use opentelemetry::trace::Tracer;
+use opentelemetry::Context;
+use opentelemetry::KeyValue;
 use scraper::Html;
 use scraper::Selector;
 use serde::{Deserialize, Serialize};
@@ -182,6 +187,8 @@ where
 
     // scrape runs a single scraping iteration, reporting any matches on targets to sender.
     pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let tracer = global::tracer("scraper");
+        let _child_span = tracer.start("scraper.scrape");
         let _scrape_timer = ScopedTimer::new("scrape timer".into());
         let (sender, receiver) = mpsc::channel();
 
@@ -196,15 +203,39 @@ where
             let mut handles = vec![];
             for t in &self.targets {
                 let sender = sender.clone();
+                let current_context = Context::current();
                 handles.push(s.spawn(move || {
+                    let tracer = global::tracer("scraper");
+                    let mut child_span = tracer
+                        .start_with_context(format!("scrape_thread: {}", t.uri), &current_context);
+                    child_span.set_attribute(KeyValue::new("target", t.uri.clone()));
                     let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
                     match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
                         Ok(Ok(x)) => {
+                            // TODO(bilal): Instead of converting from a string,
+                            // get the response and add more intereseintg things to the span
+                            let resp_size = i64::try_from(x.len()).unwrap_or(i64::max_value());
+                            child_span.add_event(
+                                "http-response",
+                                vec![
+                                    KeyValue::new("resp_size", resp_size),
+                                    KeyValue::new("uri", t.uri.clone()),
+                                    KeyValue::new("status", "ok"),
+                                ],
+                            );
                             let _ = sender.send((t, ThreadMessage::Ok(x)));
                         }
                         Ok(Err(e)) | Err(e) => {
                             let status =
                                 e.status().map_or("unknown".to_string(), |s| s.to_string());
+                            child_span.add_event(
+                                "http-response",
+                                vec![
+                                    KeyValue::new("err text", e.to_string()),
+                                    KeyValue::new("uri", t.uri.clone()),
+                                    KeyValue::new("status", status.clone()),
+                                ],
+                            );
                             let _ = sender.send((t, ThreadMessage::Err(status)));
                             log::warn!("failed to scrape {:?}, err: {:?}", t.uri, e);
                         }
