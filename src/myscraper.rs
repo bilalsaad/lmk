@@ -185,6 +185,37 @@ where
         }
     }
 
+    // Returns interesting KeyValues from from an http resonse to add to a span event.
+    fn http_response_trace_events(response: &reqwest::blocking::Response) -> Vec<KeyValue> {
+        let mut result = vec![
+            KeyValue::new(
+                "content_length",
+                response
+                    .content_length()
+                    .unwrap_or(u64::max_value())
+                    .try_into()
+                    .unwrap_or(-1),
+            ),
+            KeyValue::new("status_code", response.status().to_string()),
+            KeyValue::new("final_url", response.url().to_string()),
+            KeyValue::new("http_version", format!("{:?}", response.version())),
+            KeyValue::new(
+                "remote_addr",
+                response
+                    .remote_addr()
+                    .map_or("unknown".to_string(), |addr| addr.to_string()),
+            ),
+        ];
+
+        for (name, v) in response.headers() {
+            if let Ok(v) = v.to_str() {
+                result.push(KeyValue::new(format!("HEADER[{}]", name), v.to_string()));
+            }
+        }
+
+        result
+    }
+
     // scrape runs a single scraping iteration, reporting any matches on targets to sender.
     pub fn scrape(&self) -> Result<(), Box<dyn std::error::Error>> {
         let tracer = global::tracer("scraper");
@@ -210,22 +241,26 @@ where
                         .start_with_context(format!("scrape_thread: {}", t.uri), &current_context);
                     child_span.set_attribute(KeyValue::new("target", t.uri.clone()));
                     let _timer = ScopedTimer::new(format!("scrape for {}", t.uri));
-                    match reqwest::blocking::get(&t.uri).map(|x| x.text()) {
-                        Ok(Ok(x)) => {
-                            // TODO(bilal): Instead of converting from a string,
-                            // get the response and add more intereseintg things to the span
-                            let resp_size = i64::try_from(x.len()).unwrap_or(i64::max_value());
-                            child_span.add_event(
-                                "http-response",
-                                vec![
-                                    KeyValue::new("resp_size", resp_size),
-                                    KeyValue::new("uri", t.uri.clone()),
-                                    KeyValue::new("status", "ok"),
-                                ],
-                            );
-                            let _ = sender.send((t, ThreadMessage::Ok(x)));
+                    match reqwest::blocking::get(&t.uri) {
+                        Ok(x) => {
+                            child_span
+                                .add_event("http-response", Self::http_response_trace_events(&x));
+                            let contents = x.text();
+                            if let Err(e) = contents {
+                                child_span.add_event(
+                                    "failed to convert to text",
+                                    vec![
+                                        KeyValue::new("err text", e.to_string()),
+                                        KeyValue::new("uri", t.uri.clone()),
+                                    ],
+                                );
+                                let _ = sender.send((t, ThreadMessage::Err(e.to_string())));
+                                return;
+                            }
+                            let contents = contents.unwrap();
+                            let _ = sender.send((t, ThreadMessage::Ok(contents)));
                         }
-                        Ok(Err(e)) | Err(e) => {
+                        Err(e) => {
                             let status =
                                 e.status().map_or("unknown".to_string(), |s| s.to_string());
                             child_span.add_event(
@@ -252,6 +287,7 @@ where
                     ThreadMessage::Ok(resp) => {
                         let page = {
                             let _timer = ScopedTimer::new(format!("parse_docucment({})", t.uri));
+
                             Html::parse_document(&resp)
                         };
                         self.handle_page_content(page, t)?;
@@ -281,19 +317,33 @@ where
         page: Html,
         target: &Target,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Create a child span for handling this page's content.
+        let tracer = global::tracer("scraper");
+        let mut child_span = tracer.start(format!("handle_page_content({})", target.uri));
         let _content_timer = ScopedTimer::new(format!("handle_page_content({})", target.uri));
-        let selector = Selector::parse("*").unwrap();
-        let content = page.select(&selector).flat_map(|x| x.text());
+
+        // Get the previous matches from this page. We use these to compare against the matches we
+        // find so that we only report new matches.
         let cache_id = Self::target_id(target);
+        child_span.set_attribute(KeyValue::new("target_cache_id", cache_id.clone()));
         let old_contents = self
             .target_cache
             .borrow()
             .get(&cache_id)
             .unwrap_or("".into());
         let old_matches: HashSet<_> = old_contents.lines().collect();
+        child_span.set_attribute(KeyValue::new(
+            "num_old_contents",
+            old_matches.len().try_into().unwrap_or(-1),
+        ));
 
         // cache_value will hold the up to date matching content for target.uri.
         let mut cache_value = String::new();
+        // The number of matching items on this page -- added to the span.
+        let mut num_new_matches = 0;
+        // Grab all of the content in the html page.
+        let selector = Selector::parse("*").unwrap();
+        let content = page.select(&selector).flat_map(|x| x.text());
         {
             let _timer = ScopedTimer::new(format!("lookup and compare for {}", target.uri));
             // Look up old content and compare
@@ -316,6 +366,7 @@ where
                 })
                 .filter(|x| !old_matches.contains(x))
                 .for_each(|x| {
+                    num_new_matches += 1;
                     self.sender.send(
                         "everyone@everyone.com",
                         &target,
@@ -323,8 +374,13 @@ where
                     )
                 });
         }
+        child_span.set_attribute(KeyValue::new("num_new_matches", num_new_matches));
+        // TODO(bilal): Write the freshness date as well.
         if let Err(e) = self.target_cache.borrow_mut().put(&cache_id, &cache_value) {
+            child_span.set_attribute(KeyValue::new("cache_write", "failed"));
             log::warn!("failed to write into target_cache: {}", e);
+        } else {
+            child_span.set_attribute(KeyValue::new("cache_write", "succeeded"));
         }
         Ok(())
     }
